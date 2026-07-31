@@ -84,17 +84,17 @@ class VFile {
 }
 
 class VFS {
-  constructor(){this.root=new VFile("/",true,"","drwxr-xr-x");this.cwd=this.root;this.cwd="/";}
-  resolve(p){if(!p)return this.cwd;if(p.startsWith("~"))p="/home/hacker"+p.slice(1);let parts=p.split("/").filter(Boolean);let n=this.root;
+  constructor(){this.root=new VFile("/",true,"","drwxr-xr-x");this.cwd_node=this.root;this.cwd="/";}
+  resolve(p){if(!p||p===".")return this.cwd_node;if(p.startsWith("~"))p="/home/hacker"+p.slice(1);let parts=p.split("/").filter(Boolean);let n=this.root;
     for(let x of parts){if(x===".")continue;if(x===".."){continue}if(!n.isDir||!n.children[x])return null;n=n.children[x];}return n;}
-  ls(p,showHidden=false){let n=p?this.resolve(p):this.cwd;if(!n||!n.isDir)return null;return n.list(showHidden);}
+  ls(p,showHidden=false){let n=p?this.resolve(p):this.cwd_node;if(!n||!n.isDir)return null;return n.list(showHidden);}
   cat(p){let n=this.resolve(p);return n&&!n.isDir?n.content:null;}
   mkdir(p,name){let d=this.resolve(p);if(d&&d.isDir)d.add(new VFile(name,true,"","drwxr-xr-x"));}
   touch(p,name,content="",perms="-rw-r--r--"){let d=this.resolve(p);if(d&&d.isDir)d.add(new VFile(name,false,content,perms));}
-  cd(p){if(!p||p==="/"){this.cwd=this.root;this.cwd="/";return true;}
+  cd(p){if(!p||p==="/"){this.cwd_node=this.root;this.cwd="/";return true;}
     let parts=p.split("/").filter(Boolean);let n=this.root;
     for(let x of parts){if(x===".."){continue}if(!n.isDir||!n.children[x])return false;n=n.children[x];}
-    if(!n.isDir)return false;this.cwd=n;this.cwd="/"+parts.join("/");return true;}
+    if(!n.isDir)return false;this.cwd_node=n;this.cwd="/"+parts.join("/");return true;}
   find(pat){let r=[];this._findR(this.root,pat,r);return r;}
   _findR(n,pat,r){if(!n.isDir){if(!pat||n.name.includes(pat))r.push(n);return;}Object.values(n.children).forEach(c=>this._findR(c,pat,r));}
   grep(pat){let r=[];this._grepR(this.root,pat.toLowerCase(),r,"");return r;}
@@ -293,18 +293,26 @@ function prompt(){
 
 function process(cmd){
   cmd=cmd.trim();if(!cmd)return"";
+  // Menu commands (work regardless of mode for navigation)
+  if(cmd==="help"||cmd==="menu"||cmd==="?"||cmd==="ayuda"){
+    if(state.mode==="level")return"\n  [exit]      — Return to menu\n  [study]     — Study the concept\n  [hint]      — Get a hint\n  [submit X]  — Submit flag\n\n  Shell commands: ls cat find grep cd pwd echo chmod mkdir touch\n  file stat wc strings head tail decode encode caesar bruteforce hash\n  env export man hint submit help exit\n";
+    return cmdHelp();
+  }
+  if(cmd==="play")return cmdPlay();
+  if(cmd==="tracks")return cmdTracks();
+  if(cmd==="status")return cmdStatus();
+  if(cmd==="inventario"||cmd==="flags")return cmdInventory();
+  if(cmd==="hackername")return cmdHackername();
+  if(cmd==="walkthrough")return"Walkthrough mode coming soon. Use 'play' to start.";
+  if(cmd==="riddles")return"Riddles mode coming soon. Use 'play' to start.";
+  if(cmd==="salir"||cmd==="exit"){
+    if(state.mode==="level"){state.mode="menu";state.level=null;return"Returned to menu.";}
+    return"Goodbye. The void remembers.";
+  }
   if(state.mode==="menu"){
-    if(cmd==="play")return cmdPlay();
-    if(cmd==="help"||cmd==="menu"||cmd==="?")return cmdHelp();
-    if(cmd==="tracks")return cmdTracks();
-    if(cmd==="status")return cmdStatus();
-    if(cmd==="inventario"||cmd==="flags")return cmdInventory();
-    if(cmd==="hackername")return cmdHackername();
-    if(cmd==="salir"||cmd==="exit")return"Goodbye. The void remembers.";
     return"Unknown command. Type 'help'.";
   }
   if(state.mode==="level"){
-    if(cmd==="exit"){state.mode="menu";state.level=null;return"Returned to menu.";}
     if(cmd==="study")return state.level.getStudy();
     if(cmd==="hint"||cmd==="mirar")return"\x1b[33m> "+state.level.getHint()+"\x1b[0m";
     let result=state.level.shell.exec(cmd);
