@@ -2,6 +2,7 @@
 """
 The Void OS — Web Terminal Server
 Full terminal emulator in the browser with the game engine.
+Single-port: serves HTML and WebSocket on the same port.
 """
 
 import os
@@ -25,11 +26,10 @@ except ImportError:
         sys.exit(1)
     import websockets
 
-# Import the game engine
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from void_os import VoidOS, C
 
-# ── Capture stdout per session ──────────────────────────────────────────────
+
 class OutputCapture:
     def __init__(self):
         self.buffer = io.StringIO()
@@ -49,14 +49,12 @@ class OutputCapture:
         return val
 
 
-# ── Per-session game instance ───────────────────────────────────────────────
 class GameSession:
     def __init__(self):
         self.game = VoidOS()
         self.capture = OutputCapture()
 
     def process_command(self, cmd):
-        """Process a command and return output."""
         old_stdout = sys.stdout
         sys.stdout = self.capture
         self.capture.buffer.truncate(0)
@@ -68,12 +66,10 @@ class GameSession:
             if not cmd:
                 return ""
 
-            # Route to game logic
             state = self.game.state
             lvl = state.data["current_level"]
             name = state.data.get("hacker_name", "void")
 
-            # Menu commands
             if cmd in ("help", "menu", "?"):
                 output = self._menu_text()
             elif cmd == "play":
@@ -88,7 +84,6 @@ class GameSession:
                 state.save()
                 output = "saved. goodbye."
             else:
-                # Try as shell command in current level
                 output = self._run_shell_cmd(cmd)
 
         except Exception as e:
@@ -96,7 +91,6 @@ class GameSession:
         finally:
             sys.stdout = old_stdout
 
-        # Get captured output (from print statements in game)
         captured = self.capture.get_and_clear()
         return captured + output
 
@@ -173,14 +167,15 @@ class GameSession:
         if not level:
             return f"\r\n  Level {lid} not found.\r\n"
 
-        # Store active level
         self._active_level = level
         track = TRACKS[lid.split(".")[0]]
+        lore = level.get_lore()
+        enigma = level.get_enigma()
         return (
             f"\r\n  TRACK {lid.split('.')[0]}: {track['name']}\r\n"
             f"  {track['levels'][lid]['name']}\r\n\r\n"
-            f"  {level.get_lore()[:200]}...\r\n\r\n"
-            f"  {level.get_enigma()}\r\n"
+            f"  {lore[:200]}\r\n\r\n"
+            f"  {enigma}\r\n"
             f"  Type 'help' for commands, 'exit' to leave level.\r\n"
         )
 
@@ -215,19 +210,22 @@ class GameSession:
 # ── WebSocket handler ───────────────────────────────────────────────────────
 sessions = {}
 
-async def handle_client(websocket, path):
+async def handle_client(websocket):
     client_id = id(websocket)
     session = GameSession()
     sessions[client_id] = session
 
     try:
-        # Send welcome
+        state = session.game.state
+        lvl = state.data["current_level"]
+        name = state.data.get("hacker_name", "void")
+
         welcome = (
             "\033[36m\033[1m"
             "\r\n"
             "  ╔══════════════════════════════════════════════════════════╗\r\n"
             "  ║                                                          ║\r\n"
-            "  ║   T H E   V O I D   O S   //   v0.2.0-web              ║\r\n"
+            "  ║   T H E   V O I D   O S   //   v0.3.0                  ║\r\n"
             "  ║                                                          ║\r\n"
             "  ║   Full terminal in your browser                         ║\r\n"
             "  ║   Type 'help' to start                                  ║\r\n"
@@ -237,21 +235,10 @@ async def handle_client(websocket, path):
         )
         await websocket.send(welcome)
 
-        # Get initial prompt
-        state = session.game.state
-        lvl = state.data["current_level"]
-        name = state.data.get("hacker_name", "void")
         prompt = f"\033[32m[{lvl}] {name}@void:~$ \033[0m"
         await websocket.send(prompt)
 
         async for message in websocket:
-            if message.startswith("__KEY__:"):
-                # Handle special keys
-                key = message.split("__KEY__:")[1]
-                if key == "enter":
-                    continue  # handled by normal flow
-                continue
-
             cmd = message.strip()
             if not cmd:
                 await websocket.send("\r\n")
@@ -261,7 +248,6 @@ async def handle_client(websocket, path):
             if output:
                 await websocket.send(output)
 
-            # Send new prompt
             state = session.game.state
             lvl = state.data["current_level"]
             name = state.data.get("hacker_name", "void")
@@ -276,286 +262,143 @@ async def handle_client(websocket, path):
 
 
 # ── HTML Page ───────────────────────────────────────────────────────────────
-HTML_PAGE = """<!DOCTYPE html>
+HTML_PAGE = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>The Void OS</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    background: #0a0a0a;
-    color: #00ff41;
-    font-family: 'Fira Code', 'JetBrains Mono', 'Cascadia Code', monospace;
-    height: 100vh;
-    overflow: hidden;
-  }
-  #header {
-    background: #0d0d0d;
-    border-bottom: 1px solid #1a1a1a;
-    padding: 8px 16px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    height: 40px;
-  }
-  #header .title {
-    color: #00ff41;
-    font-size: 13px;
-    font-weight: bold;
-    letter-spacing: 2px;
-  }
-  #header .status {
-    color: #666;
-    font-size: 11px;
-  }
-  #header .status .online { color: #00ff41; }
-  #tabs {
-    background: #0d0d0d;
-    border-bottom: 1px solid #1a1a1a;
-    display: flex;
-    padding: 0 8px;
-    height: 32px;
-    align-items: flex-end;
-  }
-  .tab {
-    padding: 6px 16px;
-    font-size: 11px;
-    color: #666;
-    background: #111;
-    border: 1px solid #1a1a1a;
-    border-bottom: none;
-    border-radius: 4px 4px 0 0;
-    cursor: pointer;
-    margin-right: 2px;
-    font-family: inherit;
-  }
-  .tab.active {
-    color: #00ff41;
-    background: #0a0a0a;
-    border-color: #00ff41;
-  }
-  .tab:hover { color: #00ff41; }
-  #terminal-container {
-    height: calc(100vh - 72px);
-    padding: 4px;
-  }
-  #terminal {
-    height: 100%;
-    width: 100%;
-  }
-  .xterm { padding: 8px; }
-  .xterm-viewport::-webkit-scrollbar { width: 6px; }
-  .xterm-viewport::-webkit-scrollbar-track { background: #0a0a0a; }
-  .xterm-viewport::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
-  .xterm-viewport::-webkit-scrollbar-thumb:hover { background: #555; }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#0c0c0c;color:#b0b0b0;font-family:'IBM Plex Mono','Fira Code','Courier New',monospace;height:100vh;overflow:hidden;display:flex;flex-direction:column}
+  #bar{background:#0a0a0a;border-bottom:1px solid #1c1c1c;padding:6px 14px;display:flex;align-items:center;justify-content:space-between;height:36px;flex-shrink:0}
+  #bar .t{color:#3399ff;font-size:11px;font-weight:600;letter-spacing:3px;text-transform:uppercase}
+  #bar .s{color:#444;font-size:10px;font-family:'IBM Plex Mono',monospace}
+  #bar .s .on{color:#3399ff}
+  #term{flex:1;padding:2px;overflow:hidden}
+  #term .xterm{height:100%}
+  .xterm-viewport::-webkit-scrollbar{width:4px}
+  .xterm-viewport::-webkit-scrollbar-track{background:#0c0c0c}
+  .xterm-viewport::-webkit-scrollbar-thumb{background:#222;border-radius:2px}
+  .xterm-viewport::-webkit-scrollbar-thumb:hover{background:#333}
+  #scanline{position:fixed;top:0;left:0;right:0;bottom:0;pointer-events:none;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.03) 2px,rgba(0,0,0,0.03) 4px);z-index:9999}
+  #fade{position:fixed;top:0;left:0;right:0;bottom:0;pointer-events:none;background:radial-gradient(ellipse at center,transparent 60%,rgba(0,0,0,0.4) 100%);z-index:9998}
 </style>
 </head>
 <body>
-  <div id="header">
-    <span class="title">THE VOID OS</span>
-    <span class="status">
-      <span class="online">●</span> connected
-      &nbsp;|&nbsp; TAB: autocomplete &nbsp;|&nbsp; man: manual &nbsp;|&nbsp; hint: pista
-    </span>
-  </div>
-  <div id="tabs">
-    <button class="tab active" onclick="focusTerminal()">terminal</button>
-    <button class="tab" onclick="showHelp()">help</button>
-  </div>
-  <div id="terminal-container">
-    <div id="terminal"></div>
-  </div>
+<div id="bar">
+  <span class="t">void@term</span>
+  <span class="s"><span class="on">&#9679;</span> connected &nbsp;|&nbsp; tab: complete &nbsp;|&nbsp; help: menu</span>
+</div>
+<div id="term"></div>
+<div id="scanline"></div>
+<div id="fade"></div>
 
-  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.js"></script>
-  <script>
-    const term = new Terminal({
-      theme: {
-        background: '#0a0a0a',
-        foreground: '#00ff41',
-        cursor: '#00ff41',
-        cursorAccent: '#0a0a0a',
-        selectionBackground: '#00ff4133',
-        black: '#0a0a0a',
-        red: '#ff0040',
-        green: '#00ff41',
-        yellow: '#fffc00',
-        blue: '#0066ff',
-        magenta: '#cc00ff',
-        cyan: '#00ffff',
-        white: '#cccccc',
-        brightBlack: '#555555',
-        brightRed: '#ff5555',
-        brightGreen: '#55ff55',
-        brightYellow: '#ffff55',
-        brightBlue: '#5555ff',
-        brightMagenta: '#ff55ff',
-        brightCyan: '#55ffff',
-        brightWhite: '#ffffff',
-      },
-      fontFamily: "'Fira Code', 'JetBrains Mono', 'Cascadia Code', monospace",
-      fontSize: 14,
-      lineHeight: 1.2,
-      cursorBlink: true,
-      cursorStyle: 'block',
-      allowTransparency: true,
-      scrollback: 10000,
-    });
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+<script>
+const term = new Terminal({
+  theme:{
+    background:'#0c0c0c',
+    foreground:'#b0b0b0',
+    cursor:'#3399ff',
+    cursorAccent:'#0c0c0c',
+    selectionBackground:'#3399ff33',
+    black:'#0c0c0c',red:'#cc3333',green:'#33cc33',yellow:'#cc9933',
+    blue:'#3399ff',magenta:'#9933cc',cyan:'#33cccc',white:'#b0b0b0',
+    brightBlack:'#555',brightRed:'#ff5555',brightGreen:'#55ff55',
+    brightYellow:'#ffff55',brightBlue:'#5599ff',brightMagenta:'#cc55ff',
+    brightCyan:'#55ffff',brightWhite:'#ffffff'
+  },
+  fontFamily:"'IBM Plex Mono','Fira Code','Courier New',monospace",
+  fontSize:13,lineHeight:1.3,
+  cursorBlink:true,cursorStyle:'block',
+  allowTransparency:true,scrollback:5000
+});
 
-    const fitAddon = new FitAddon.FitAddon();
-    const webLinksAddon = new WebLinksAddon.WebLinksAddon();
-    term.loadAddon(fitAddon);
-    term.loadAddon(webLinksAddon);
+const fitAddon = new FitAddon.FitAddon();
+term.loadAddon(fitAddon);
+term.open(document.getElementById('term'));
+fitAddon.fit();
+window.addEventListener('resize',()=>fitAddon.fit());
 
-    term.open(document.getElementById('terminal'));
-    fitAddon.fit();
+const ws = new WebSocket(
+  (location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/ws'
+);
 
-    window.addEventListener('resize', () => fitAddon.fit());
+let inputBuf='';
+let promptStr='';
 
-    // WebSocket connection
-    const ws = new WebSocket(
-      (location.protocol === 'https:' ? 'wss:' : 'ws:') +
-      '//' + location.host + '/ws'
-    );
+ws.onmessage=(e)=>{
+  const d=e.data;
+  if(d.startsWith('\033[')){
+    promptStr=d;
+    term.write('\r\x1b[K'+d);
+  }else{
+    term.write(d);
+  }
+};
+ws.onclose=()=>term.write('\r\n\033[31m[disconnected]\033[0m\r\n');
+ws.onerror=()=>term.write('\r\n\033[31m[connection error]\033[0m\r\n');
 
-    let inputBuffer = '';
-    let currentPrompt = '';
-
-    ws.onmessage = (event) => {
-      const data = event.data;
-      if (data.startsWith('\033[')) {
-        // This is a prompt - write it styled
-        term.write(data);
-        currentPrompt = data;
-      } else {
-        term.write(data);
-      }
-    };
-
-    ws.onclose = () => {
-      term.write('\r\n\033[31m[disconnected]\033[0m\r\n');
-    };
-
-    ws.onerror = (err) => {
-      term.write('\r\n\033[31m[connection error]\033[0m\r\n');
-    };
-
-    // Handle keyboard input
-    term.onKey(({ key, domEvent }) => {
-      const ev = domEvent;
-      const printable = !ev.altKey && !ev.ctrlKey && !ev.metaKey;
-
-      if (ev.key === 'Enter') {
-        if (inputBuffer.trim()) {
-          ws.send(inputBuffer);
-        } else {
-          ws.send('');
-        }
-        inputBuffer = '';
-        term.write('\r\n');
-      } else if (ev.key === 'Backspace') {
-        if (inputBuffer.length > 0) {
-          inputBuffer = inputBuffer.slice(0, -1);
-          term.write('\b \b');
-        }
-      } else if (ev.ctrlKey && ev.key === 'c') {
-        term.write('^C\r\n');
-        inputBuffer = '';
-        ws.send('');
-      } else if (ev.ctrlKey && ev.key === 'l') {
-        term.clear();
-        term.write(currentPrompt);
-      } else if (ev.key === 'Tab') {
-        ev.preventDefault();
-        // Send tab for completion
-        ws.send('__TAB__:' + inputBuffer);
-      } else if (printable) {
-        inputBuffer += key;
-        term.write(key);
-      }
-    });
-
-    // Handle paste
-    term.onData((data) => {
-      // Multi-character paste
-      if (data.length > 1 && !data.startsWith('\x1b')) {
-        inputBuffer += data;
-        term.write(data);
-      }
-    });
-
-    function focusTerminal() {
-      term.focus();
-      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-      document.querySelector('.tab').classList.add('active');
-    }
-
-    function showHelp() {
-      ws.send('help');
-      term.focus();
-    }
-
-    // Auto-focus
-    term.focus();
-  </script>
+term.onKey(({key,domEvent:e})=>{
+  if(e.key==='Enter'){
+    ws.send(inputBuf);
+    inputBuf='';
+    term.write('\r\n');
+  }else if(e.key==='Backspace'){
+    if(inputBuf.length>0){inputBuf=inputBuf.slice(0,-1);term.write('\b \b');}
+  }else if(e.ctrlKey&&e.key==='c'){
+    term.write('^C\r\n');inputBuf='';ws.send('');
+  }else if(e.ctrlKey&&e.key==='l'){
+    term.clear();term.write(promptStr);
+  }else if(e.key==='Tab'){
+    e.preventDefault();
+    const cmds=['ls','cat','find','grep','cd','pwd','echo','chmod','mkdir','touch',
+      'file','stat','wc','strings','head','tail','decode','encode','caesar',
+      'bruteforce','hash','env','export','man','hint','submit','help','exit',
+      'play','tracks','status','inventario','hackername','salir'];
+    const m=cmds.filter(c=>c.startsWith(inputBuf));
+    if(m.length===1){inputBuf=m[0];term.write('\r\x1b[K'+promptStr+inputBuf);}
+    else if(m.length>1)term.write('\r\n'+m.join('  ')+'\r\n'+promptStr+inputBuf);
+  }else if(!e.ctrlKey&&!e.altKey&&!e.metaKey&&e.key.length===1){
+    inputBuf+=e.key;term.write(key);
+  }
+});
+term.onData(d=>{if(d.length>1&&!d.startsWith('\x1b')){inputBuf+=d;term.write(d);}});
+term.focus();
+</script>
 </body>
 </html>"""
 
 
-# ── HTTP Server ──────────────────────────────────────────────────────────────
-from http.server import HTTPServer, SimpleHTTPRequestHandler
-import threading
-
-class VoidHandler(SimpleHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == '/' or self.path == '/index.html':
-            self.send_response(200)
-            self.send_header('Content-type', 'text/html')
-            self.end_headers()
-            self.wfile.write(HTML_PAGE.encode())
-        else:
-            # Serve static files from the void_os directory
-            super().do_GET()
-
-    def log_message(self, format, *args):
-        pass  # Suppress logs
+# ── Main ────────────────────────────────────────────────────────────────────
+async def process_request(path, headers):
+    if path == "/" or path == "/index.html":
+        return (200, [("Content-Type", "text/html")], HTML_PAGE.encode())
+    return None
 
 
-def run_http(port):
-    server = HTTPServer(('0.0.0.0', port), VoidHandler)
-    server.serve_forever()
-
-
-# ── Main ─────────────────────────────────────────────────────────────────────
 async def main():
-    http_port = 8080
-    ws_port = 8081
+    port = 8080
 
     print(f"\033[36m")
     print(f"  ╔══════════════════════════════════════════════════════════╗")
-    print(f"  ║   T H E   V O I D   O S   //   v0.2.0-web             ║")
+    print(f"  ║   T H E   V O I D   O S   //   v0.3.0                 ║")
     print(f"  ╠══════════════════════════════════════════════════════════╣")
     print(f"  ║                                                          ║")
-    print(f"  ║   Terminal:  http://localhost:{http_port}                  ║")
-    print(f"  ║   WebSocket: ws://localhost:{ws_port}                     ║")
+    print(f"  ║   http://localhost:{port}                                ║")
     print(f"  ║                                                          ║")
-    print(f"  ║   Open in browser for full terminal experience          ║")
     print(f"  ║   Press Ctrl+C to stop                                  ║")
     print(f"  ║                                                          ║")
     print(f"  ╚══════════════════════════════════════════════════════════╝")
     print(f"\033[0m")
 
-    # Start HTTP server in thread
-    http_thread = threading.Thread(target=run_http, args=(http_port,), daemon=True)
-    http_thread.start()
-
-    # Start WebSocket server
-    async with websockets.serve(handle_client, "0.0.0.0", ws_port):
-        await asyncio.Future()  # run forever
+    async with websockets.serve(
+        handle_client, "0.0.0.0", port,
+        process_request=process_request
+    ):
+        await asyncio.Future()
 
 
 if __name__ == "__main__":
