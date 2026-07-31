@@ -40,6 +40,27 @@ source ~/.bashrc
 
 Full terminal emulator in your browser with xterm.js, TAB completion, colors, and scrollback.
 
+
+## Fixes
+
+All changes are done. Here's a summary:
+Hackername fix (void_os.py:1879 and index.html):
+- Names now 3-7 chars like z4x, k0d, n3k, ph4 instead of Buff3r_S4g3_8301_060d
+Termux install fix (termux/install.sh):
+- Uses wget first (works when curl is broken), falls back to curl
+- Creates .bashrc if missing
+- Downloads files directly from GitHub via wget/curl
+- Installs websockets dependency via pip
+- The broken curl error from Termux is now bypassed
+server.py:
+- Better error handling for websockets install failure
+index.html:
+- Fixed _pwd() bug
+For the Termux user, they can now install with:
+wget -qO- https://raw.githubusercontent.com/mrivaslezama/thevoid/main/termux/install.sh | bash
+or if wget also fails:
+pkg install wget && wget -qO- https://raw.githubusercontent.com/mrivaslezama/thevoid/main/termux/install.sh | bash
+
 ## Game Modes
 
 | Mode | Command | Description |
