@@ -85,7 +85,7 @@ class VFile {
 
 class VFS {
   constructor(){this.root=new VFile("/",true,"","drwxr-xr-x");this.cwd=this.root;this.cwd="/";}
-  resolve(p){if(!p)return this.cwd;let parts=p.split("/").filter(Boolean);let n=this.root;
+  resolve(p){if(!p)return this.cwd;if(p.startsWith("~"))p="/home/hacker"+p.slice(1);let parts=p.split("/").filter(Boolean);let n=this.root;
     for(let x of parts){if(x===".")continue;if(x===".."){continue}if(!n.isDir||!n.children[x])return null;n=n.children[x];}return n;}
   ls(p,showHidden=false){let n=p?this.resolve(p):this.cwd;if(!n||!n.isDir)return null;return n.list(showHidden);}
   cat(p){let n=this.resolve(p);return n&&!n.isDir?n.content:null;}
@@ -123,10 +123,10 @@ class VShell {
     if(!tokens.length)return"";
     let cmd=tokens[0],args=tokens.slice(1);
     // env set
-    if(cmd.includes("=")&&!cmd.startsWith("-")){let[k,v]=cmd.split("=",1);this.env[k]=v;return"";}
+    if(cmd.includes("=")&&!cmd.startsWith("-")){let[k,v]=cmd.split("=",1);if(v.startsWith("~"))v="/home/hacker"+v.slice(1);this.env[k]=v;return"";}
     let result=this._dispatch(cmd,args);
-    if(redir!==null&&result!==null){let n=this.fs.resolve(redir);if(n&&!n.isDir){n.content=append?n.content+result:result;n.size=n.content.length;}
-      else{let pp=redir.split("/").slice(0,-1).join("/")||"/";let fn=redir.split("/").pop();this.fs.touch(pp,fn,result);}}
+    if(redir!==null&&result!==null){if(redir.startsWith("~"))redir="/home/hacker"+redir.slice(1);let n=this.fs.resolve(redir);if(n&&!n.isDir){n.content=append?n.content+result:result;n.size=n.content.length;}
+      else{this._ensureParent(redir);let pp=redir.split("/").slice(0,-1).join("/")||"/";let fn=redir.split("/").pop();this.fs.touch(pp,fn,result);}}
     return result||"";
   }
   _dispatch(cmd,args){
@@ -135,7 +135,23 @@ class VShell {
       mkdir:this._mkdir,touch:this._touch,file:this._file,stat:this._stat,wc:this._wc,strings:this._strings,
       decode:this._decode,encode:this._encode,caesar:this._caesar,bruteforce:this._bruteforce,
       hash:this._hash,env:this._env,export:this._export,man:this._man,hint:this._hint,submit:this._submit,help:this._help};
-    let fn=T[cmd];return fn?fn.call(this,args):cmd+": command not found";
+    let fn=T[cmd];
+    if(fn)return fn.call(this,args);
+    if(cmd.startsWith("/")){let n=this.fs.resolve(cmd);if(n&&!n.isDir)return this._runScript(n.content,args);return""+cmd+": command not found";}
+    return cmd+": command not found";
+  }
+  _runScript(script,args){
+    let lines=script.split("\n"),output=[],ifStack=[],skipElse=false;
+    for(let line of lines){line=line.trim();if(!line||line.startsWith("#"))continue;
+      if(line.startsWith("if [")){try{let rest=line.slice(4,-2).trim();let[rest2,val]=rest.split("=");let varName=rest2.replace(/["\s]/g,"").replace("$","");let v=val.trim().replace(/"/g,"");ifStack.push(this.env[varName]===v);skipElse=this.env[varName]!==v;}catch(e){ifStack.push(false);skipElse=true;}continue;}
+      if(line==="else"){skipElse=ifStack.length?ifStack[ifStack.length-1]:false;continue;}
+      if(line==="fi"){if(ifStack.length)ifStack.pop();continue;}
+      if(skipElse&&ifStack.length)continue;
+      if(line.startsWith("echo ")){let text=line.slice(5).trim().replace(/^['"]|['"]$/g,"");for(let k in this.env)text=text.replace("$"+k,this.env[k]);output.push(text);continue;}
+      if(line.includes("=")&&!line.startsWith("export")){let[k,v]=line.split("=",1);this.env[k.trim()]=v.trim().replace(/"/g,"");continue;}
+      let subCmd=line.split(/\s+/)[0]||"";
+      if(subCmd){let n=this.fs.resolve("/challenge/"+subCmd);if(n&&!n.isDir&&n.content){let r=this._runScript(n.content,line.split(/\s+/).slice(1));if(r)output.push(r);}}
+    }return output.join("\n");
   }
   _ls(a){let sh=false,p=null,lo=false;for(let x of a){if(x.startsWith("-")){if(x.includes("a"))sh=true;if(x.includes("l"))lo=true;}else p=x;}
     let items=this.fs.ls(p,sh);if(!items)return"ls: cannot access '"+(p||".")+"': No such file";
@@ -150,13 +166,18 @@ class VShell {
   _tail(a){let n=10,p=null;for(let i=0;i<a.length;i++){if(a[i]==="-n"&&a[i+1])n=parseInt(a[++i]);else p=a[i];}
     let c=this.fs.cat(p);return c?c.split("\n").slice(-n).join("\n"):"tail: no file";}
   _cd(a){return this.fs.cd(a[0]||"/")?"":"cd: no such dir";}
-  _pwd(){return this.cwd;}
+  _pwd(){return this.fs.cwd;}
   _echo(a){return a.join(" ").replace(/"/g,"");}
   _whoami(){return this.env.user||"hacker";}
   _id(){return"uid=1000("+this.env.user+") gid=1000(hacker)";}
-  _chmod(a){if(a.length<2)return"chmod: missing";let n=this.fs.resolve(a[1]);if(n)n.perms=a[0];return"";}
-  _mkdir(a){if(!a.length)return"";this.fs.mkdir(this.fs.cwd,a[0]);return"";}
-  _touch(a){if(!a.length)return"";this.fs.touch(this.fs.cwd,a[0]);return"";}
+  _chmod(a){if(a.length<2)return"chmod: missing";let p=a[1];if(p.startsWith("~"))p="/home/hacker"+p.slice(1);let n=this.fs.resolve(p);if(n)n.perms=a[0];return n?"":'chmod: cannot access '+a[1]+': No such file';}
+  _mkdir(a){if(!a.length)return"";let p=a[0];if(p.startsWith("~"))p="/home/hacker"+p.slice(1);
+    if(p.startsWith("/")){let parts=p.split("/").filter(Boolean);let c=this.fs.root;for(let x of parts){if(!c.children[x])c.add(new VFile(x,true,"","drwxr-xr-x"));c=c.children[x];}return"";}
+    this.fs.mkdir(this.fs.cwd,p);return"";}
+  _touch(a){if(!a.length)return"";let p=a[0];if(p.startsWith("~"))p="/home/hacker"+p.slice(1);
+    if(p.startsWith("/")){let pp=p.split("/").slice(0,-1).join("/")||"/";let fn=p.split("/").pop();this._ensureParent(p);this.fs.touch(pp,fn);return"";}
+    this.fs.touch(this.fs.cwd,p);return"";}
+  _ensureParent(p){if(p.startsWith("~"))p="/home/hacker"+p.slice(1);let parts=p.split("/").filter(Boolean).slice(0,-1);let c=this.fs.root;for(let x of parts){if(!c.children[x])c.add(new VFile(x,true,"","drwxr-xr-x"));c=c.children[x];}}
   _file(a){if(!a.length)return"";let n=this.fs.resolve(a[0]);return n?(n.isDir?"directory":"ASCII text"):"no such file";}
   _stat(a){if(!a.length)return"";let n=this.fs.resolve(a[0]);return n?"File: "+a[0]+"\nSize: "+n.size+" perms: "+n.perms:"no such file";}
   _wc(a){if(!a.length)return"";let c=this.fs.cat(a[0]);if(!c)return"";return c.split("\n").length+" "+c.split(/\s+/).length+" "+c.length+" "+a[0];}
@@ -329,10 +350,10 @@ function cmdInventory(){
   return"\n  CAPTURED FLAGS\n"+state.flags.map(f=>"  "+f).join("\n")+"\n";
 }
 function cmdHackername(){
-  let p=["Phr34k","N011","V01d","D43m0n","Crypt0","Sh4d0w","Gh05t","B1n4ry","C1ph3r","R00t","3xpl01t","Buff3r","Ph4nt0m"];
-  let s=["4nub1s","0ur0b0r0s","V4nd4l","Hydr4","Wr41th","Sp3ct3r","F0x","W0lf","H0ll0w","Br34k3r","0r4cl3","Gl1tch"];
-  let n=Math.floor(Math.random()*9999).toString(16);
-  let name=p[Math.floor(Math.random()*p.length)]+"_"+s[Math.floor(Math.random()*s.length)]+"_"+n;
+  let pool=["x","z","k","n","r","v","j","q","0x","nk","rx","v0","kz","zx","jn","qr",
+    "n3k","z4x","r1f","k0d","v8n","x7r","j4z","q0x","n1x","z3k","r0x","k4n","v1d","x9z",
+    "n0k","z1x","r4v","k7d","v0x","x3n","j8z","q1r","ph4","cr8","sh3","gh0","b1n","st4","h3x"];
+  let name=pool[Math.floor(Math.random()*pool.length)];
   state.hackerName=name;save();
   return"\n\x1b[32m══════════════════════════════\n  S 3 R 1 4 L   1 D 3 N T 1 T Y\n══════════════════════════════\n\n  \x1b[1m"+name+"\x1b[0m\n\n  4ssum3 y0ur 1d3nt1ty.\x1b[0m\n";
 }

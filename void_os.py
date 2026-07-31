@@ -195,6 +195,8 @@ class VirtualFS:
         self.cwd_path = "/"
 
     def _normalize(self, path):
+        if path.startswith("~"):
+            path = "/home/hacker" + path[1:]
         if path.startswith("/"):
             parts = [p for p in path.split("/") if p]
             stack = []
@@ -393,6 +395,8 @@ class VirtualShell:
         # Handle variable assignment: VAR=value
         if "=" in cmd and not cmd.startswith("-"):
             var, val = cmd.split("=", 1)
+            if val.startswith("~"):
+                val = "/home/hacker" + val[1:]
             self.env[var] = val
             return ""
 
@@ -400,6 +404,9 @@ class VirtualShell:
 
         # Handle redirection of output
         if redirect_target is not None and result is not None:
+            # Expand tilde in redirect target
+            if redirect_target.startswith("~"):
+                redirect_target = "/home/hacker" + redirect_target[1:]
             node = self.fs._resolve(redirect_target)
             if node and not node.is_dir:
                 if append:
@@ -410,6 +417,8 @@ class VirtualShell:
             else:
                 parent_path = "/".join(redirect_target.split("/")[:-1]) or "/"
                 fname = redirect_target.split("/")[-1]
+                # Create intermediate dirs if needed
+                self._ensure_parent(redirect_target)
                 self.fs.touch(parent_path, fname, result)
 
         # Hook: levels can return FLAG{...} or modify result
@@ -463,7 +472,74 @@ class VirtualShell:
                 return fn(args)
             except Exception as e:
                 return f"{C.RED}error: {e}{C.RST}"
+        # Try running as executable path (e.g. /challenge/run)
+        if cmd.startswith("/"):
+            node = self.fs._resolve(cmd)
+            if node and not node.is_dir:
+                return self._run_script(node.content, args)
+            return f"{C.RED}{cmd}: command not found{C.RST}"
         return f"{C.RED}{cmd}: command not found{C.RST}"
+
+    def _run_script(self, script, args):
+        lines = script.strip().split("\n")
+        output = []
+        if_stack = []
+        skip_else = False
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("if ["):
+                try:
+                    _, rest = line.split("if [", 1)
+                    rest = rest.rstrip("]; then").strip()
+                    var, op, val = rest.split(None, 2)
+                    var = var.strip('"$')
+                    val = val.strip('"')
+                    cond = self.env.get(var, "") == val
+                    if_stack.append(cond)
+                    skip_else = not cond
+                    continue
+                except Exception:
+                    if_stack.append(False)
+                    skip_else = True
+                    continue
+            if line == "else":
+                if if_stack:
+                    skip_else = if_stack[-1]
+                continue
+            if line == "fi":
+                if if_stack:
+                    if_stack.pop()
+                continue
+            if skip_else and if_stack:
+                continue
+            if line.startswith("echo "):
+                text = line[5:].strip().strip("'\"")
+                for var in list(self.env.keys()):
+                    text = text.replace(f"${var}", self.env[var])
+                output.append(text)
+                continue
+            if line.startswith("read "):
+                var = line.split()[-1]
+                self.env[var] = ""
+                continue
+            if "=" in line and not line.startswith("export"):
+                k, v = line.split("=", 1)
+                self.env[k.strip()] = v.strip().strip('"')
+                continue
+            # Unknown command — try to find it in PATH or fs
+            sub_cmd = line.split()[0] if line.split() else ""
+            if sub_cmd:
+                # Check if it's a file in the virtual FS
+                for p in ["/challenge/" + sub_cmd, sub_cmd]:
+                    node = self.fs._resolve(p)
+                    if node and not node.is_dir and node.content:
+                        sub_result = self._run_script(node.content, line.split()[1:])
+                        if sub_result:
+                            output.append(sub_result)
+                        break
+        return "\n".join(output)
 
     # ── Linux Commands ───────────────────────────────────────────────────────
     def _ls(self, args):
@@ -613,14 +689,46 @@ class VirtualShell:
     def _mkdir(self, args):
         if not args:
             return "mkdir: missing operand"
-        self.fs.touch(self.fs.cwd_path, args[0], is_dir=True)
+        path = args[0]
+        if path.startswith("~"):
+            path = "/home/hacker" + path[1:]
+        if path.startswith("/"):
+            # Create intermediate dirs, then the final dir
+            parts = [p for p in path.split("/") if p]
+            cur = self.fs.root
+            for part in parts:
+                if part not in cur.children:
+                    cur.add_child(VirtualFile(part, is_dir=True, perms="drwxr-xr-x"))
+                cur = cur.children[part]
+            return ""
+        self.fs.touch(self.fs.cwd_path, path, is_dir=True)
         return ""
 
     def _touch(self, args):
         if not args:
             return "touch: missing operand"
-        self.fs.touch(self.fs.cwd_path, args[0])
+        path = args[0]
+        if path.startswith("~"):
+            path = "/home/hacker" + path[1:]
+        if path.startswith("/"):
+            parent = "/".join(path.split("/")[:-1]) or "/"
+            fname = path.split("/")[-1]
+            # Create intermediate dirs if needed
+            self._ensure_parent(path)
+            self.fs.touch(parent, fname)
+            return ""
+        self.fs.touch(self.fs.cwd_path, path)
         return ""
+
+    def _ensure_parent(self, path):
+        if path.startswith("~"):
+            path = "/home/hacker" + path[1:]
+        parts = [p for p in path.split("/") if p][:-1]
+        cur = self.fs.root
+        for part in parts:
+            if part not in cur.children:
+                cur.add_child(VirtualFile(part, is_dir=True, perms="drwxr-xr-x"))
+            cur = cur.children[part]
 
     def _file(self, args):
         if not args:
@@ -1878,30 +1986,21 @@ def create_level(level_id, state, saved_ps=None):
 
 # ── Hacker Name Generator ───────────────────────────────────────────────────
 def generate_hacker_name():
-    # Leet speak prefix/suffix pools
-    prefixes = [
-        "Phr34k", "N011", "V01d", "D43m0n", "Crypt0", "Sh4d0w",
-        "Gh05t", "B1n4ry", "C1ph3r", "R00t", "Sh3ll", "H3x",
-        "Z3r0", "K3rn3l", "St4ck", "H34p", "P1p3", "F0rk",
-        "B1t", "Byt3", "P1ng", "P0rt", "P4ck3t", "N3t",
-        "3xpl01t", "L00t", "Dr01d", "Sn1ff3r", "Cr4ck", "Br34k",
-        "Scr1pt", "0v3rfl0w", "Buff3r", "D3m0n", "Ph4nt0m", "Sp3ctr3",
-    ]
-
-    suffixes = [
-        "4nub1s", "0ur0b0r0s", "V4nd4l", "M1n0t4ur", "Ph03n1x",
-        "Wr41th", "Sp3ct3r", "R3v3n4nt", "Ch1m3r4", "Hydr4",
-        "G0l3m", "R4v3n", "S3rph3nt", "F0x", "W0lf",
-        "D4nc3r", "H0ll0w", "Str4ng3r", "Dr1ft3r", "W4tch3r",
-        "K33p3r", "Br34k3r", "W34v3r", "S4g3", "0r4cl3",
-        "N3twr4ck", "D4t4", "Cr4sh", "Gl1tch", "V01d",
+    # Short leet speak pools (3-4 chars each) — names stay 3-7 chars total
+    pool = [
+        "x", "z", "k", "n", "r", "v", "j", "q",
+        "0x", "nk", "rx", "v0", "kz", "zx", "jn", "qr",
+        "n3k", "z4x", "r1f", "k0d", "v8n", "x7r", "j4z", "q0x",
+        "n1x", "z3k", "r0x", "k4n", "v1d", "x9z", "j0k", "q7r",
+        "ph4", "cr8", "sh3", "gh0", "b1n", "st4", "h3x", "p1ng",
+        "n0k", "z1x", "r4v", "k7d", "v0x", "x3n", "j8z", "q1r",
     ]
 
     print(f"\n{C.DIM}sc4nning r3sp0ns3s...")
     time.sleep(0.5)
     print("qu3rying ARP4N3t d4t4b4s3s...")
     time.sleep(0.5)
-    print("g3n3r4t1ng s3r14l 1d3nt1ty...{C.RST}\n")
+    print(f"g3n3r4t1ng s3r14l 1d3nt1ty...{C.RST}\n")
     time.sleep(0.5)
 
     questions = [
@@ -1925,15 +2024,10 @@ def generate_hacker_name():
         except (EOFError, KeyboardInterrupt, ValueError):
             answers.append(random.choice(opts))
 
-    # Generate leet serial name
+    # Generate short name (3-7 chars)
     seed = sum(ord(c) for a in answers for c in a)
     random.seed(seed)
-    prefix = random.choice(prefixes)
-    suffix = random.choice(suffixes)
-    serial = random.randint(0, 9999)
-    hex_id = format(seed % 65536, "04x")
-    # Format: Prefix_Suffix_S3r14l_H3x
-    name = f"{prefix}_{suffix}_{serial:04d}_{hex_id}"
+    name = random.choice(pool)
 
     print(f"\n{C.GRN}{'='*60}")
     print(f"  S 3 R 1 4 L   1 D 3 N T 1 T Y")

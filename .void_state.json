@@ -1,15 +1,19 @@
 {
-  "current_level": "1.3",
+  "current_level": "2.2",
   "completed": [
     "1.1",
-    "1.2"
+    "1.2",
+    "1.3",
+    "2.1"
   ],
   "flags": [
     "FLAG{echo_in_the_darkness}",
-    "FLAG{not_all_who_wander_are_empty}"
+    "FLAG{not_all_who_wander_are_empty}",
+    "void{th3_n33dl3_1n_th3_h4yst4ck}",
+    "void{h1j4ck3d_p4th5_2_gl0ry}"
   ],
-  "points": 300,
-  "hacker_name": null,
+  "points": 800,
+  "hacker_name": "n3k",
   "puzzle_states": {
     "1.1": {
       "step": 1,
@@ -19,9 +23,14 @@
       "found": true
     },
     "1.3": {
-      "step": 2
-    }
+      "step": 2,
+      "decoded": true
+    },
+    "2.1": {
+      "win_found": true
+    },
+    "2.2": {}
   },
   "started": "2026-07-30T21:23:55.817154",
-  "saved": "2026-07-30T22:11:08.890005"
+  "saved": "2026-07-31T10:41:15.838956"
 }

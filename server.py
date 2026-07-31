@@ -16,7 +16,13 @@ try:
     import websockets
 except ImportError:
     print("Installing websockets...")
-    os.system(f"{sys.executable} -m pip install websockets -q")
+    try:
+        import subprocess
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "websockets", "-q"])
+    except Exception:
+        print("ERROR: Could not install websockets.")
+        print("Run manually: python3 -m pip install websockets")
+        sys.exit(1)
     import websockets
 
 # Import the game engine
