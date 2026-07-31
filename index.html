@@ -386,11 +386,21 @@ term.onKey(({key,domEvent:e})=>{
     if(matches.length===1){inputBuf=matches[0];term.write("\r\x1b[K"+(state.mode==="menu"?"["+state.current+"] "+(state.hackerName||"void")+"@void:~$ ":"hacker@void:~$ ")+inputBuf);}
     else if(matches.length>1)write("\r\n"+matches.join("  ")+"\r\n");
     prompt();
-  }else if(!e.ctrlKey&&!e.altKey&&!e.metaKey&&e.key.length===1){
-    inputBuf+=e.key;term.write(key);
   }
 });
-term.onData(d=>{if(d.length>1&&!d.startsWith("\x1b")){inputBuf+=d;term.write(d);}});
+term.onData(d=>{
+  for(let ch of d){
+    if(ch==="\r"||ch==="\n"){
+      write("\r\n");
+      if(inputBuf.trim()){let out=process(inputBuf);if(out)write(out+"\r\n");}
+      inputBuf="";prompt();
+    }else if(ch==="\x7f"){
+      if(inputBuf.length>0){inputBuf=inputBuf.slice(0,-1);term.write("\b \b");}
+    }else if(ch>=" "){
+      inputBuf+=ch;term.write(ch);
+    }
+  }
+});
 function focusTerm(){term.focus();document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));document.querySelector(".tab").classList.add("active");}
 term.focus();
 </script>

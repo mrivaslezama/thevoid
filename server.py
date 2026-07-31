@@ -80,6 +80,10 @@ class GameSession:
                 output = self._status_text()
             elif cmd in ("inventario", "flags"):
                 output = self._inventory_text()
+            elif cmd == "hackername":
+                output = self._hackername_text()
+            elif cmd in ("riddles", "walkthrough"):
+                output = f"{cmd} mode coming soon. Use 'play' to start."
             elif cmd == "salir":
                 state.save()
                 output = "saved. goodbye."
@@ -152,6 +156,23 @@ class GameSession:
             lines.append(f"  {f}")
         lines.append("")
         return "\r\n".join(lines)
+
+    def _hackername_text(self):
+        import random
+        pool = ["x","z","k","n","r","v","j","q","0x","nk","rx","v0","kz","zx","jn","qr",
+            "n3k","z4x","r1f","k0d","v8n","x7r","j4z","q0x","n1x","z3k","r0x","k4n","v1d","x9z",
+            "n0k","z1x","r4v","k7d","v0x","x3n","j8z","q1r","ph4","cr8","sh3","gh0","b1n","st4","h3x"]
+        name = random.choice(pool)
+        self.game.state.data["hacker_name"] = name
+        self.game.state.save()
+        return (
+            "\r\n"
+            "══════════════════════════════\r\n"
+            "  S E R I A L   I D E N T I T Y\r\n"
+            "══════════════════════════════\r\n\r\n"
+            f"  {name}\r\n\r\n"
+            "  Assume your identity.\r\n"
+        )
 
     def _play_level(self):
         from void_os import create_level, TRACKS, FLAGS
@@ -251,7 +272,10 @@ async def handle_client(websocket):
             state = session.game.state
             lvl = state.data["current_level"]
             name = state.data.get("hacker_name", "void")
-            prompt = f"\033[32m[{lvl}] {name}@void:~$ \033[0m"
+            if hasattr(session, '_active_level') and session._active_level:
+                prompt = f"\033[32mhacker@void:~$ \033[0m"
+            else:
+                prompt = f"\033[32m[{lvl}] {name}@void:~$ \033[0m"
             await websocket.send(prompt)
 
     except websockets.exceptions.ConnectionClosed:
@@ -342,17 +366,7 @@ ws.onclose=()=>term.write('\r\n\033[31m[disconnected]\033[0m\r\n');
 ws.onerror=()=>term.write('\r\n\033[31m[connection error]\033[0m\r\n');
 
 term.onKey(({key,domEvent:e})=>{
-  if(e.key==='Enter'){
-    ws.send(inputBuf);
-    inputBuf='';
-    term.write('\r\n');
-  }else if(e.key==='Backspace'){
-    if(inputBuf.length>0){inputBuf=inputBuf.slice(0,-1);term.write('\b \b');}
-  }else if(e.ctrlKey&&e.key==='c'){
-    term.write('^C\r\n');inputBuf='';ws.send('');
-  }else if(e.ctrlKey&&e.key==='l'){
-    term.clear();term.write(promptStr);
-  }else if(e.key==='Tab'){
+  if(e.key==='Tab'){
     e.preventDefault();
     const cmds=['ls','cat','find','grep','cd','pwd','echo','chmod','mkdir','touch',
       'file','stat','wc','strings','head','tail','decode','encode','caesar',
@@ -361,11 +375,23 @@ term.onKey(({key,domEvent:e})=>{
     const m=cmds.filter(c=>c.startsWith(inputBuf));
     if(m.length===1){inputBuf=m[0];term.write('\r\x1b[K'+promptStr+inputBuf);}
     else if(m.length>1)term.write('\r\n'+m.join('  ')+'\r\n'+promptStr+inputBuf);
-  }else if(!e.ctrlKey&&!e.altKey&&!e.metaKey&&e.key.length===1){
-    inputBuf+=e.key;term.write(key);
+  }else if(e.ctrlKey&&e.key==='l'){
+    term.clear();term.write(promptStr);
   }
 });
-term.onData(d=>{if(d.length>1&&!d.startsWith('\x1b')){inputBuf+=d;term.write(d);}});
+term.onData(d=>{
+  for(let ch of d){
+    if(ch==='\r'||ch==='\n'){
+      ws.send(inputBuf);inputBuf='';term.write('\r\n');
+    }else if(ch==='\x7f'){
+      if(inputBuf.length>0){inputBuf=inputBuf.slice(0,-1);term.write('\b \b');}
+    }else if(ch==='\x03'){
+      term.write('^C\r\n');inputBuf='';ws.send('');
+    }else if(ch>=' '){
+      inputBuf+=ch;term.write(ch);
+    }
+  }
+});
 term.focus();
 </script>
 </body>
