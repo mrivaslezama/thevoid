@@ -30,6 +30,13 @@ cd ~/void_os
 
 # Open http://localhost:8080
 ```
+...
+Termux
+pkg update -y && pkg install python curl -y
+curl -sL https://raw.githubusercontent.com/mrivaslezama/thevoid/main/install.sh | bash
+source ~/.bashrc
+....
+
 
 Full terminal emulator in your browser with xterm.js, TAB completion, colors, and scrollback.
 
