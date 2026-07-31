@@ -1,0 +1,86 @@
+VOID(1)                    User Commands                    VOID(1)
+
+NAME
+       void - The Void OS hacker training terminal
+
+SYNOPSIS
+       void
+       void-web
+
+DESCRIPTION
+       The Void OS is an ultra-minimalist, poetic, dark interactive
+       terminal game for training elite hackers through real Linux
+       command simulation.
+
+       Inspired by The Dark Room, Ruby Koans, pwn.college, PicoCTF,
+       Hacker 101, OverTheWire, and Phrack Magazine lore.
+
+MODES
+       void       CLI mode - runs in terminal
+       void-web   Web mode - opens in browser
+
+GAME MODES
+       play         Main campaign - 8 levels across 4 tracks
+       walkthrough  Guided tutorial, step by step
+       riddles      Logic puzzles about hacker history
+       hackername   Generate your serial alias
+
+TRACKS
+       Track 1: Sensing the Void
+           Levels 1.1-1.3: Redirection, hidden files, pipelines
+
+       Track 2: Altering Reality
+           Levels 2.1-2.2: PATH hijacking, environment variables
+
+       Track 3: Privilege Escalation
+           Levels 3.1-3.2: SUID, cronjob injection
+
+       Track 4: Memory Reversing
+           Level 4.1: Buffer overflow
+
+SHELL COMMANDS
+       Navigation:
+           ls [-la] [path]       List directory
+           cd <path>             Change directory
+           pwd                   Print working dir
+           find [-name x]        Search files
+
+       Files:
+           cat <file>            Read file
+           echo <text> > file    Write to file
+           touch <name>          Create file
+           mkdir <name>          Create directory
+           chmod <perm> <file>   Change permissions
+
+       Analysis:
+           file <file>           Identify file type
+           stat <file>           File metadata
+           strings <file>        Extract printable strings
+           grep <pattern>        Search contents
+
+       Crypto:
+           decode <txt> <type>   Decode (base64/hex/rot13)
+           caesar <txt> <shift>  Caesar cipher
+           hash <txt> [algo]     Hash (md5/sha1/sha256)
+
+       System:
+           man <command>         Manual page
+           hint                  Get level hint
+           submit FLAG{...}      Submit flag
+
+EXAMPLES
+       void                    Start the game
+       void-web                Start web server
+
+FILES
+       ~/.void_os/             Game data directory
+       ~/.void_os/void_os.py   Game engine
+       ~/.void_state.json      Save file
+       ~/.void_history         Command history
+       ~/.void_diary.md        Game diary
+
+AUTHORS
+       The Void OS
+
+SEE ALSO
+       python3(1)
