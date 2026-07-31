@@ -326,8 +326,8 @@ class VirtualShell:
     COMMANDS = [
         "ls", "cat", "find", "grep", "head", "tail", "cd", "pwd",
         "echo", "whoami", "id", "uname", "chmod", "mkdir", "touch",
-        "file", "stat", "wc", "sort", "uniq", "strings",
-        "decode", "encode", "caesar", "bruteforce", "hash",
+        "file", "stat", "wc", "sort", "uniq", "strings", "tr", "xxd",
+        "decode", "encode", "caesar", "bruteforce", "hash", "base64",
         "curl", "ping", "export", "env",
         "man", "hint", "submit", "help", "exit",
     ]
@@ -428,7 +428,15 @@ class VirtualShell:
         parts = raw.split("|")
         data = ""
         for p in parts:
-            data = self.execute(p.strip())
+            cmd = p.strip()
+            if not cmd:
+                continue
+            # Inject previous output as first argument
+            if data:
+                tokens = cmd.split(None, 1)
+                if tokens:
+                    cmd = tokens[0] + " " + data.strip()
+            data = self.execute(cmd)
         return data
 
     def _dispatch(self, cmd, args):
@@ -440,9 +448,11 @@ class VirtualShell:
             "chmod": self._chmod, "mkdir": self._mkdir, "touch": self._touch,
             "file": self._file, "stat": self._stat, "wc": self._wc,
             "sort": self._sort, "uniq": self._uniq, "strings": self._strings,
+            "tr": self._tr, "xxd": self._xxd,
             "decode": self._decode, "encode": self._encode,
             "caesar": self._caesar, "bruteforce": self._bruteforce,
-            "hash": self._hash, "curl": self._curl, "ping": self._ping,
+            "hash": self._hash, "base64": self._base64_cmd,
+            "curl": self._curl, "ping": self._ping,
             "export": self._export, "env": self._env,
             "man": self._man, "hint": self._hint_cmd,
             "submit": self._submit, "help": self._help,
@@ -692,19 +702,81 @@ class VirtualShell:
             printable.append("".join(current))
         return "\n".join(printable[:30])
 
+    def _tr(self, args):
+        """tr - translate/delete characters. Usage: tr <input> <from> <to>"""
+        if len(args) < 2:
+            return "usage: tr <text> <from> <to>\n       tr -d <chars>  (delete)"
+        if args[0] == "-d" and len(args) >= 2:
+            # Delete characters
+            text = args[1] if len(args) > 2 else ""
+            chars = args[1]
+            return text.translate(str.maketrans("", "", chars))
+        if len(args) >= 3:
+            text, fr, to = args[0], args[1], args[2]
+            table = str.maketrans(fr, to)
+            return text.translate(table)
+        return "usage: tr <text> <from> <to>"
+
+    def _xxd(self, args):
+        """xxd - hex dump. Usage: xxd <file>"""
+        if not args:
+            return "xxd: missing file"
+        c = self.fs.cat(args[0])
+        if c is None:
+            return f"xxd: {args[0]}: No such file"
+        lines = []
+        for i in range(0, len(c), 16):
+            chunk = c[i:i+16]
+            hex_part = " ".join(f"{ord(ch):02x}" for ch in chunk)
+            ascii_part = "".join(ch if ch.isprintable() else "." for ch in chunk)
+            lines.append(f"{i:08x}: {hex_part:<48}  {ascii_part}")
+        return "\n".join(lines)
+
+    def _base64_cmd(self, args):
+        """base64 - encode/decode. Usage: base64 <file> or base64 -d <text>"""
+        if not args:
+            return "usage: base64 <file>\n       base64 -d <text>"
+        if args[0] == "-d":
+            text = " ".join(args[1:]) if len(args) > 1 else ""
+            text = text.replace("\n", "").replace(" ", "")
+            try:
+                return base64.b64decode(text).decode()
+            except Exception as e:
+                return f"base64 decode error: {e}"
+        c = self.fs.cat(args[0])
+        if c is None:
+            # Treat as text
+            try:
+                return base64.b64encode(args[0].encode()).decode()
+            except Exception as e:
+                return f"base64 error: {e}"
+        return base64.b64encode(c.encode()).decode()
+
     # ── Crypto Commands ──────────────────────────────────────────────────────
     def _decode(self, args):
-        if len(args) < 2:
+        if len(args) < 1:
+            return "usage: decode <text> <base64|hex|rot13>\n       decode <type>  (reads from previous pipe)"
+        # Handle: decode <text> <type> OR decode <type> (with piped input)
+        if len(args) >= 2 and args[-1].lower() in ("base64", "hex", "rot13"):
+            text = " ".join(args[:-1])
+            dtype = args[-1].lower()
+        elif len(args) == 1 and args[0].lower() in ("base64", "hex", "rot13"):
+            # Only type given — text should be in piped input (already in args via pipe)
+            return f"decode: provide text to decode. Usage: echo TEXT | decode {args[0]}"
+        else:
             return "usage: decode <text> <base64|hex|rot13>"
-        text, dtype = args[0], args[1].lower()
+        # Clean text: remove newlines, spaces for base64
+        text = text.strip()
+        if dtype == "base64":
+            text = text.replace("\n", "").replace(" ", "")
         try:
             if dtype == "base64":
-                return base64.b64decode(text).decode()
+                import base64 as b64
+                return b64.b64decode(text).decode()
             if dtype == "hex":
-                return bytes.fromhex(text).decode()
+                return bytes.fromhex(text.replace(" ", "")).decode()
             if dtype == "rot13":
                 return codecs.decode(text, "rot_13")
-            return f"decode: unknown type '{dtype}'"
         except Exception as e:
             return f"decode error: {e}"
 
@@ -1360,17 +1432,23 @@ class Level13(AbstractLevel):
 
     def _setup_environment(self):
         self.fs.touch("/", "challenge", is_dir=True)
+        # Clean base64 that decodes to contain the actual flag
+        secret = "void{th3_n33dl3_1n_th3_h4yst4ck}"
+        clean_b64 = base64.b64encode(secret.encode()).decode()
         self.fs.touch("/challenge", "archive.bin",
-            "SGVsbG8gZnJvbSB0aGUgb3RoZXIgc2lkZS4gVGhlIHNlY3JldCBpczoKZkxBR3tiYXNl\n"
-            "NjRfZGVjb2RlZF9sb25nX3RvX3RydWV9Cg==\n"
-            "Extra data: \x00\x01\x02\x03\n"
-            "More noise: AAAAABBBBCCCCDDDD\n"
-            "Rot13 hint: gur_synt_vf_uvggra_va_gur_fbyng\n"
-            "Final garbage: !@#$%^&*()_+{}|:<>?",
+            f"=== INTERCEPTED TRANSMISSION ===\n"
+            f"Encoded: {clean_b64}\n"
+            f"=== END ===\n"
+            f"\n"
+            f"Noise: AAAAABBBBCCCCDDDD\n"
+            f"Rot13 hint: gur_synt_vf_uvggra_va_gur_fbyng\n"
+            f"Garbage: !@#$%^&*()\n",
             perms="-rw-r--r--")
         self.fs.touch("/challenge", "readme.txt",
             "This archive contains encoded secrets.\n"
-            "Use strings to extract readable text, then decode.")
+            "1. Find the base64 string (starts with 'dm9pZ')\n"
+            "2. decode dm9pZC... base64\n"
+            "3. Or: cat archive.bin | grep Encoded | cut -d' ' -f2 | decode - base64")
         self.env["PATH"] = "/usr/local/bin:/usr/bin:/bin"
         self.env["user"] = "hacker"
 
@@ -1410,10 +1488,11 @@ class Level13(AbstractLevel):
         )
 
     def _shell_hook(self, cmd, args, result):
-        if cmd == "decode" and len(args) >= 2 and args[1] == "base64":
+        if cmd == "decode" and len(args) >= 2 and args[-1] == "base64":
             try:
-                decoded = base64.b64decode(args[0]).decode()
-                if "FLAG{" in decoded:
+                text = " ".join(args[:-1]).replace("\n", "").replace(" ", "")
+                decoded = base64.b64decode(text).decode()
+                if "void{" in decoded.lower() or "flag{" in decoded.lower():
                     self.puzzle_state["decoded"] = True
                     return f"__FLAG__{self.flag}"
             except Exception:

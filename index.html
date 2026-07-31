@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Void OS</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#0a0a0a;color:#00ff41;font-family:'Fira Code','JetBrains Mono',monospace;height:100vh;overflow:hidden}
+  #header{background:#0d0d0d;border-bottom:1px solid #1a1a1a;padding:8px 16px;display:flex;align-items:center;justify-content:space-between;height:40px}
+  #header .title{color:#00ff41;font-size:13px;font-weight:bold;letter-spacing:2px}
+  #header .status{color:#666;font-size:11px}
+  #header .status .on{color:#00ff41}
+  #tabs{background:#0d0d0d;border-bottom:1px solid #1a1a1a;display:flex;padding:0 8px;height:32px;align-items:flex-end}
+  .tab{padding:6px 16px;font-size:11px;color:#666;background:#111;border:1px solid #1a1a1a;border-bottom:none;border-radius:4px 4px 0 0;cursor:pointer;margin-right:2px;font-family:inherit}
+  .tab.active{color:#00ff41;background:#0a0a0a;border-color:#00ff41}
+  .tab:hover{color:#00ff41}
+  #terminal-container{height:calc(100vh - 72px);padding:4px}
+  #terminal{height:100%;width:100%}
+  .xterm{padding:8px}
+  .xterm-viewport::-webkit-scrollbar{width:6px}
+  .xterm-viewport::-webkit-scrollbar-track{background:#0a0a0a}
+  .xterm-viewport::-webkit-scrollbar-thumb{background:#333;border-radius:3px}
+</style>
+</head>
+<body>
+<div id="header">
+  <span class="title">THE VOID OS</span>
+  <span class="status"><span class="on">●</span> static mode — no server needed</span>
+</div>
+<div id="tabs">
+  <button class="tab active" onclick="focusTerm()">terminal</button>
+</div>
+<div id="terminal-container"><div id="terminal"></div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// THE VOID OS — Static JavaScript Engine
+// ═══════════════════════════════════════════════════════════════════════════
+
+const FLAGS = {
+  "1.1":"void{3ch0_1n_th3_d4rk}","1.2":"void{n0t_4ll_wh0_w4nd3r_4r3_3mpty}",
+  "1.3":"void{th3_n33dl3_1n_th3_h4yst4ck}","2.1":"void{h1j4ck3d_p4th5_2_gl0ry}",
+  "2.2":"void{3nv1r0nm3nt_1z_d3st1ny}","3.1":"void{5u1d_k3y5_2_th3_k1ngd0m}",
+  "3.2":"void{cr0n_th3_sl33p1ng_g0d}","4.1":"void{th3_st4ck_r3m3mb3r5_4ll}"
+};
+
+const TRACKS = {
+  "1":{name:"SENSING THE VOID",sub:"Flujos, Archivos y Arqueología Hacker",levels:{
+    "1.1":{name:"El Despertar del Eco",diff:"★☆☆"},"1.2":{name:"Los Archivos Fantasma",diff:"★★☆"},
+    "1.3":{name:"El Archivo de los Sabios",diff:"★★★"}}},
+  "2":{name:"ALTERING REALITY",sub:"Variables, Rutas y Entornos",levels:{
+    "2.1":{name:"El Sendero Perdido",diff:"★★☆"},"2.2":{name:"Las Máscaras del Entorno",diff:"★★☆"}}},
+  "3":{name:"PRIVILEGE ESCALATION",sub:"El Mito de Prometeo / Acceso Root",levels:{
+    "3.1":{name:"El Espejo del Rey",diff:"★★★"},"3.2":{name:"La Cronología del Caos",diff:"★★★"}}},
+  "4":{name:"MEMORY REVERSING",sub:"El Inframundo del Silicio",levels:{
+    "4.1":{name:"El Desborde del Alma",diff:"★★★★"}}}
+};
+
+const LORE = {
+  manifesto:"\"We explore... we probe... we hack. We are theengers of theelectronic frontier.\" — The Conscience of a Hacker, 1986",
+  morris:"\"On November 2, 1988, the Morris Worm crawled through ARPANET. Its creator became the first convicted under the CFAA.\"",
+  phrack:"\"Phrack was born in 1985. The gospel of the underground. Phreak, hack, learn, repeat.\"",
+  thompson:"\"Ken Thompson compiled the first C compiler on paper. The trust model of Unix began with one man.\"",
+  cypherpunk:"\"Cypherpunks write code. We know someone has to write software to defend privacy.\" — Eric Hughes, 1993",
+  suid:"\"The SUID bit — a key left in the door by the gods of Unix. And the mortals learned to walk where only gods could go.\"",
+  cron:"\"The crontab is a sleeping god. It awakens every minute, executes the will of root, and sleeps again.\"",
+  buffer:"\"Stack smashing: pouring more data than a vessel can hold. The stack doesn't know data from return addresses.\" — Phrack #49"
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// VIRTUAL FILESYSTEM
+// ═══════════════════════════════════════════════════════════════════════════
+class VFile {
+  constructor(name,isDir=false,content="",perms="-rw-r--r--",owner="root"){
+    this.name=name;this.isDir=isDir;this.content=content;
+    this.perms=perms;this.owner=owner;this.children={};this.size=content.length;
+  }
+  add(c){if(this.isDir)this.children[c.name]=c;}
+  list(hide=false){return Object.values(this.children).filter(c=>hide||!c.name.startsWith("."));}
+}
+
+class VFS {
+  constructor(){this.root=new VFile("/",true,"","drwxr-xr-x");this.cwd=this.root;this.cwd="/";}
+  resolve(p){if(!p)return this.cwd;let parts=p.split("/").filter(Boolean);let n=this.root;
+    for(let x of parts){if(x===".")continue;if(x===".."){continue}if(!n.isDir||!n.children[x])return null;n=n.children[x];}return n;}
+  ls(p,showHidden=false){let n=p?this.resolve(p):this.cwd;if(!n||!n.isDir)return null;return n.list(showHidden);}
+  cat(p){let n=this.resolve(p);return n&&!n.isDir?n.content:null;}
+  mkdir(p,name){let d=this.resolve(p);if(d&&d.isDir)d.add(new VFile(name,true,"","drwxr-xr-x"));}
+  touch(p,name,content="",perms="-rw-r--r--"){let d=this.resolve(p);if(d&&d.isDir)d.add(new VFile(name,false,content,perms));}
+  cd(p){if(!p||p==="/"){this.cwd=this.root;this.cwd="/";return true;}
+    let parts=p.split("/").filter(Boolean);let n=this.root;
+    for(let x of parts){if(x===".."){continue}if(!n.isDir||!n.children[x])return false;n=n.children[x];}
+    if(!n.isDir)return false;this.cwd=n;this.cwd="/"+parts.join("/");return true;}
+  find(pat){let r=[];this._findR(this.root,pat,r);return r;}
+  _findR(n,pat,r){if(!n.isDir){if(!pat||n.name.includes(pat))r.push(n);return;}Object.values(n.children).forEach(c=>this._findR(c,pat,r));}
+  grep(pat){let r=[];this._grepR(this.root,pat.toLowerCase(),r,"");return r;}
+  _grepR(n,pat,r,pfx){if(!n.isDir){if(n.content.toLowerCase().includes(pat))r.push(pfx+n.name);return;}
+    Object.values(n.children).forEach(c=>this._grepR(c,pat,r,pfx+n.name+"/"));}
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// VIRTUAL SHELL
+// ═══════════════════════════════════════════════════════════════════════════
+class VShell {
+  constructor(fs){this.fs=fs;this.env={PATH:"/usr/local/bin:/usr/bin:/bin",user:"hacker"};this.history=[];}
+  exec(raw){
+    raw=raw.trim();if(!raw)return"";this.history.push(raw);
+    if(raw==="exit")return"__EXIT__";
+    // pipes
+    if(raw.includes("|")){let parts=raw.split("|");let d="";for(let p of parts)d=this.exec(p.trim());return d;}
+    // semicolons
+    if(raw.includes(";")){return raw.split(";").map(p=>this.exec(p.trim())).filter(Boolean).join("\n");}
+    // &&
+    if(raw.includes("&&")){let[l,r]=raw.split("&&",1);let res=this.exec(l.trim());if(res&&!res.includes("error"))return res+"\n"+this.exec(r.trim());return res;}
+    // redirection
+    let append=false,redir=null,cmdPart=raw;
+    for(let op of [[">>",true],[">",false]]){if(raw.includes(op[0])){let p=raw.split(op[0],1);cmdPart=p[0].trim();redir=p[1].trim();append=op[1];break;}}
+    let tokens;try{tokens=cmdPart.match(/(?:[^\s"]+|"[^"]*")/g)||[];}catch(e){tokens=cmdPart.split(/\s+/);}
+    if(!tokens.length)return"";
+    let cmd=tokens[0],args=tokens.slice(1);
+    // env set
+    if(cmd.includes("=")&&!cmd.startsWith("-")){let[k,v]=cmd.split("=",1);this.env[k]=v;return"";}
+    let result=this._dispatch(cmd,args);
+    if(redir!==null&&result!==null){let n=this.fs.resolve(redir);if(n&&!n.isDir){n.content=append?n.content+result:result;n.size=n.content.length;}
+      else{let pp=redir.split("/").slice(0,-1).join("/")||"/";let fn=redir.split("/").pop();this.fs.touch(pp,fn,result);}}
+    return result||"";
+  }
+  _dispatch(cmd,args){
+    const T={ls:this._ls,cat:this._cat,find:this._find,grep:this._grep,head:this._head,tail:this._tail,
+      cd:this._cd,pwd:this._pwd,echo:this._echo,whoami:this._whoami,id:this._id,chmod:this._chmod,
+      mkdir:this._mkdir,touch:this._touch,file:this._file,stat:this._stat,wc:this._wc,strings:this._strings,
+      decode:this._decode,encode:this._encode,caesar:this._caesar,bruteforce:this._bruteforce,
+      hash:this._hash,env:this._env,export:this._export,man:this._man,hint:this._hint,submit:this._submit,help:this._help};
+    let fn=T[cmd];return fn?fn.call(this,args):cmd+": command not found";
+  }
+  _ls(a){let sh=false,p=null,lo=false;for(let x of a){if(x.startsWith("-")){if(x.includes("a"))sh=true;if(x.includes("l"))lo=true;}else p=x;}
+    let items=this.fs.ls(p,sh);if(!items)return"ls: cannot access '"+(p||".")+"': No such file";
+    if(!items.length)return"";if(lo)return items.map(f=>{let pre=f.isDir?"d":"-";return pre+f.perms.slice(1)+" "+f.owner.padEnd(8)+" "+(f.isDir?f.name+"/":f.size+" "+f.name);}).join("\n");
+    return items.map(f=>f.isDir?f.name+"/":f.name).join("  ");}
+  _cat(a){if(!a.length)return"cat: missing file";let c=this.fs.cat(a[0]);return c!==null?c:"cat: "+a[0]+": No such file";}
+  _find(a){let np=null,pp=null;for(let i=0;i<a.length;i++){if(a[i]==="-name"&&a[i+1])np=a[++i];else if(a[i]==="-size"&&a[i+1])np=a[++i].replace(/[+c]/g,"");}
+    return this.fs.find(np).map(f=>f.name).join("\n")||"";}
+  _grep(a){if(!a.length)return"";return this.fs.grep(a[0]).join("\n")||"";}
+  _head(a){let n=10,p=null;for(let i=0;i<a.length;i++){if(a[i]==="-n"&&a[i+1])n=parseInt(a[++i]);else p=a[i];}
+    let c=this.fs.cat(p);return c?c.split("\n").slice(0,n).join("\n"):"head: no file";}
+  _tail(a){let n=10,p=null;for(let i=0;i<a.length;i++){if(a[i]==="-n"&&a[i+1])n=parseInt(a[++i]);else p=a[i];}
+    let c=this.fs.cat(p);return c?c.split("\n").slice(-n).join("\n"):"tail: no file";}
+  _cd(a){return this.fs.cd(a[0]||"/")?"":"cd: no such dir";}
+  _pwd(){return this.cwd;}
+  _echo(a){return a.join(" ").replace(/"/g,"");}
+  _whoami(){return this.env.user||"hacker";}
+  _id(){return"uid=1000("+this.env.user+") gid=1000(hacker)";}
+  _chmod(a){if(a.length<2)return"chmod: missing";let n=this.fs.resolve(a[1]);if(n)n.perms=a[0];return"";}
+  _mkdir(a){if(!a.length)return"";this.fs.mkdir(this.fs.cwd,a[0]);return"";}
+  _touch(a){if(!a.length)return"";this.fs.touch(this.fs.cwd,a[0]);return"";}
+  _file(a){if(!a.length)return"";let n=this.fs.resolve(a[0]);return n?(n.isDir?"directory":"ASCII text"):"no such file";}
+  _stat(a){if(!a.length)return"";let n=this.fs.resolve(a[0]);return n?"File: "+a[0]+"\nSize: "+n.size+" perms: "+n.perms:"no such file";}
+  _wc(a){if(!a.length)return"";let c=this.fs.cat(a[0]);if(!c)return"";return c.split("\n").length+" "+c.split(/\s+/).length+" "+c.length+" "+a[0];}
+  _strings(a){if(!a.length)return"";let c=this.fs.cat(a[0]);if(!c)return"";return c.match(/[^\x00-\x1F]{4,}/g)?.join("\n")||"";}
+  _decode(a){if(a.length<2)return"usage: decode <text> <base64|hex|rot13>";
+    let types=["base64","hex","rot13"];let dtype=a[a.length-1].toLowerCase();
+    let text;if(types.includes(dtype)){text=a.slice(0,-1).join(" ").replace(/\n/g,"").replace(/ /g,"");}else{return"usage: decode <text> <base64|hex|rot13>";}
+    try{if(dtype==="base64")return atob(text);if(dtype==="hex")return text.match(/.{1,2}/g).map(h=>String.fromCharCode(parseInt(h,16))).join("");
+    if(dtype==="rot13")return text.replace(/[a-zA-Z]/g,c=>String.fromCharCode(c.charCodeAt(0)+(c.toLowerCase()>"m"?-13:13)));
+    }catch(e){}return"decode error";}
+  _encode(a){if(a.length<2)return"usage: encode <text> <base64|hex|rot13>";
+    if(a[1]==="base64")return btoa(a[0]);if(a[1]==="hex")return Array.from(a[0]).map(c=>c.charCodeAt(0).toString(16)).join("");
+    if(a[1]==="rot13")return a[0].replace(/[a-zA-Z]/g,c=>String.fromCharCode(c.charCodeAt(0)+(c.toLowerCase()>"m"?-13:13)));return"";}
+  _caesar(a){if(a.length<2)return"usage: caesar <text> <shift>";let s=parseInt(a[1]);let dec=a.includes("decrypt");
+    return a[0].replace(/[a-zA-Z]/g,c=>{let b=c<="Z"?65:97;return String.fromCharCode((c.charCodeAt(0)-b+(dec?-s:s)+26)%26+b);});}
+  _bruteforce(a){if(!a.length)return"";let r=[];for(let s=0;s<26;s++){let d=a[0].replace(/[a-zA-Z]/g,c=>{let b=c<="Z"?65:97;return String.fromCharCode((c.charCodeAt(0)-b-s+26)%26+b);});r.push("["+String(s).padStart(2)+"] "+d+(s===13?" <- likely":""));}return r.join("\n");}
+  _hash(a){if(!a.length)return"";let algo=a[1]||"md5";return"["+algo+"] "+Array.from(a[0]).map(c=>c.charCodeAt(0).toString(16)).join("").slice(0,32);}
+  _env(){return Object.entries(this.env).map(([k,v])=>k+"="+v).join("\n");}
+  _export(a){if(!a.length)return this._env();if(a[0].includes("=")){let[k,v]=a[0].split("=",1);this.env[k]=v;}return"";}
+  _submit(a){return a.length?"__FLAG__"+a.join(" "):"usage: submit FLAG{...}";}
+  _man(a){if(!a.length)return"Usage: man <command>";return"MAN PAGE: "+a[0]+"\nSee documentation for "+a[0]+".";}
+  _hint(a){return"__HINT__";}
+  _help(){return"ls cat find grep cd pwd echo chmod mkdir touch\nfile stat wc strings head tail\ndecode encode caesar bruteforce hash\nenv export man hint submit help exit";}
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LEVELS
+// ═══════════════════════════════════════════════════════════════════════════
+class Level {
+  constructor(id,state){this.id=id;this.state=state;this.fs=new VFS();this.shell=new VFS();
+    this.shell=new VShell(this.fs);this.flag=FLAGS[id];this.solved=false;this.step=0;this._setup();}
+  _setup(){
+    const L={
+      "1.1":()=>{this.fs.mkdir("/","challenge");this.fs.touch("/challenge","core");this.fs.touch("/challenge","readme.txt","Inject DESPIERTA into /challenge/core using >");},
+      "1.2":()=>{this.fs.mkdir("/","challenge");this.fs.mkdir("/challenge","vault");for(let i=0;i<99;i++)this.fs.touch("/challenge/vault","f"+i+".txt");this.fs.touch("/challenge/vault","whisper.dat","the worm speaks in whispers");},
+      "1.3":()=>{this.fs.mkdir("/","challenge");this.fs.touch("/challenge","archive.bin","=== INTERCEPTED ===\nEncoded: dm9pZHt0aDNfbjMzZGwzXzFuX3RoM19oNHlzdDRja30=\n=== END ===\nNoise: AAAA\nRot13: gur_synt_vf_uvggra_va_gur_fbyng");},
+      "2.1":()=>{this.fs.mkdir("/","challenge");this.fs.touch("/challenge","run","#!/bin/bash\necho Searching...\nwin\nDone.");},
+      "2.2":()=>{this.fs.mkdir("/","challenge");this.fs.mkdir("/","etc");this.fs.touch("/etc","cypherpunk.conf","Secret: PGP_WAS_HERE_1991");this.fs.touch("/challenge","auth","#!/bin/bash\necho ACCESS DENIED");this.shell.env.SECRET_HANDSHAKE="";},
+      "3.1":()=>{this.env={user:"lowpriv",uid:"1000"};this.fs.mkdir("/","challenge");this.fs.mkdir("/","root");this.fs.touch("/challenge","backdoor","#!/bin/bash\ncat /root/flag.txt","-rwsr-xr-x");this.fs.touch("/root","flag.txt",this.flag,"-rw-------");},
+      "3.2":()=>{this.env={user:"lowpriv",uid:"1000"};this.fs.mkdir("/","challenge");this.fs.mkdir("/","root");this.fs.mkdir("/","etc");this.fs.touch("/challenge","backup.sh","#!/bin/bash\ncp /root/secret.txt /tmp/","-rwxrwxrwx");this.fs.touch("/root","secret.txt",this.flag);this.fs.touch("/etc","crontab","* * * * * /challenge/backup.sh");},
+      "4.1":()=>{this.fs.mkdir("/","challenge");this.fs.touch("/challenge","gate","#!/bin/bash\necho Enter password:\nread INPUT\nif echo $INPUT | grep -q True; then echo GATE OPENED; else echo LOCKED; fi");this.fs.touch("/challenge","gate.c","char buffer[64]; int auth=0;\ngets(buffer); // DANGEROUS");this.fs.touch("/challenge","readme.txt","The buffer is 64 bytes. Overflow it.");}
+    };L[this.id]?.();for(let k in this.env)this.shell.env[k]=this.env[k];}
+  getLore(){return LORE[["manifesto","morris","phrack","thompson","cypherpunk","suid","cron","buffer"][Object.keys(LEVELS).indexOf(this.id)]||"manifesto"];}
+  getEnigma(){
+    const E={"1.1":"El archivo /challenge/core está sediento. Inyecta DESPIERTA con >",
+      "1.2":"100 archivos. Solo uno tiene peso. Encuéntralo.",
+      "1.3":"El binario corrupto contiene cadenas ocultas. Filtra y decodifica.",
+      "2.1":"El ejecutable busca 'win' pero no existe. Créalo y ponlo en PATH.",
+      "2.2":"Un binario exige un Handshake secreto. Busca la llave en /etc/.",
+      "3.1":"Eres lowpriv. /root/flag.txt está sellado. Pero backdoor tiene SUID...",
+      "3.2":"Un script corre como root cada minuto. Es world-writable. Modifícalo.",
+      "4.1":"La compuerta pide password. El buffer mide 64 bytes. Desbórdalo."};return E[this.id]||"";}
+  getHint(){
+    const H={"1.1":["echo PALABRA > archivo","echo DESPIERTA > /challenge/core"],
+      "1.2":["find /challenge/vault/ -size +0c","ls -la /challenge/vault/ | grep -v ' 0 '"],
+      "1.3":["strings /challenge/archive.bin | grep SGV","decode SGVsbG8... base64"],
+      "2.1":["mkdir ~/bin && echo 'echo WIN' > ~/bin/win","chmod +x ~/bin/win && PATH=~/bin:$PATH && /challenge/run"],
+      "2.2":["cat /etc/cypherpunk.conf","export SECRET_HANDSHAKE=PGP_WAS_HERE_1991 && /challenge/auth"],
+      "3.1":["ls -la /challenge/backdoor","/challenge/backdoor"],
+      "3.2":["ls -la /challenge/backup.sh","echo '#!/bin/bash' > /challenge/backup.sh && echo 'cat /root/secret.txt' >> /challenge/backup.sh"],
+      "4.1":["cat /challenge/gate.c","echo AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAATrue | /challenge/gate"]};
+    let h=H[this.id]||["Explore the filesystem."];return h[Math.min(this.step++,h.length-1)];}
+  getStudy(){
+    const S={"1.1":"echo X > file   write\n echo X >> file  append\n cat file        read",
+      "1.2":"ls -la          list hidden\n find / -size +0c  non-empty files",
+      "1.3":"strings file    extract text\n decode <txt> base64|hex|rot13",
+      "2.1":"PATH=dir:$PATH  add to path\n chmod +x file   make executable",
+      "2.2":"env             show vars\n export KEY=val  set variable",
+      "3.1":"chmod 4755 file SUID\n ls -la          see 's' in perms",
+      "3.2":"crontab -l      list jobs\n world-writable = anyone can edit",
+      "4.1":"char buf[64]; int auth;\n gets(buf) no bounds check!\n 65+ bytes overflow → overwrite auth"};return S[this.id]||"";}
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GAME STATE
+// ═══════════════════════════════════════════════════════════════════════════
+const LEVEL_ORDER=["1.1","1.2","1.3","2.1","2.2","3.1","3.2","4.1"];
+let state={current:"1.1",completed:[],flags:[],points:0,hackerName:null,level:null,mode:"menu"};
+
+function save(){try{localStorage.setItem("void_state",JSON.stringify(state));}catch(e){}}
+function load(){try{let s=localStorage.getItem("void_state");if(s){let d=JSON.parse(s);Object.assign(state,d);}}catch(e){}}
+function isUnlocked(id){let i=LEVEL_ORDER.indexOf(id);return i===0||LEVEL_ORDER[i-1] in state.completed;}
+function completeLevel(id){if(!state.completed.includes(id)){state.completed.push(id);state.flags.push(FLAGS[id]);state.points+=TRACKS[id.split(".")[0]].levels[id].diff.split("★").length*100;let i=LEVEL_ORDER.indexOf(id);if(i<LEVEL_ORDER.length-1)state.current=LEVEL_ORDER[i+1];}save();}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TERMINAL
+// ═══════════════════════════════════════════════════════════════════════════
+const term = new Terminal({
+  theme:{background:"#0a0a0a",foreground:"#00ff41",cursor:"#00ff41",cursorAccent:"#0a0a0a",
+    selectionBackground:"#00ff4133",black:"#0a0a0a",red:"#ff0040",green:"#00ff41",yellow:"#fffc00",
+    blue:"#0066ff",magenta:"#cc00ff",cyan:"#00ffff",white:"#cccccc",
+    brightBlack:"#555",brightRed:"#ff5555",brightGreen:"#55ff55",brightYellow:"#ffff55",
+    brightBlue:"#5555ff",brightMagenta:"#ff55ff",brightCyan:"#55ffff",brightWhite:"#fff"},
+  fontFamily:"'Fira Code','JetBrains Mono',monospace",fontSize:14,lineHeight:1.2,
+  cursorBlink:true,cursorStyle:"block",scrollback:10000
+});
+const fitAddon = new FitAddon.FitAddon();
+term.loadAddon(fitAddon);
+term.open(document.getElementById("terminal"));
+fitAddon.fit();
+window.addEventListener("resize",()=>fitAddon.fit());
+
+let inputBuf="";
+function write(s){term.write(s);}
+function prompt(){
+  if(state.mode==="menu"){
+    let name=state.hackerName||"void";
+    write("\x1b[32m["+state.current+"] "+name+"@void:~$\x1b[0m ");
+  }else if(state.mode==="level"){
+    write("\x1b[32mhacker@void:~$\x1b[0m ");
+  }
+}
+
+function process(cmd){
+  cmd=cmd.trim();if(!cmd)return"";
+  if(state.mode==="menu"){
+    if(cmd==="play")return cmdPlay();
+    if(cmd==="help"||cmd==="menu"||cmd==="?")return cmdHelp();
+    if(cmd==="tracks")return cmdTracks();
+    if(cmd==="status")return cmdStatus();
+    if(cmd==="inventario"||cmd==="flags")return cmdInventory();
+    if(cmd==="hackername")return cmdHackername();
+    if(cmd==="salir"||cmd==="exit")return"Goodbye. The void remembers.";
+    return"Unknown command. Type 'help'.";
+  }
+  if(state.mode==="level"){
+    if(cmd==="exit"){state.mode="menu";state.level=null;return"Returned to menu.";}
+    if(cmd==="study")return state.level.getStudy();
+    if(cmd==="hint"||cmd==="mirar")return"\x1b[33m> "+state.level.getHint()+"\x1b[0m";
+    let result=state.level.shell.exec(cmd);
+    if(result==="__EXIT__"){state.mode="menu";state.level=null;return"Returned to menu.";}
+    if(result.includes("__FLAG__")){
+      let submitted=result.replace("__FLAG__","").trim();
+      if(submitted===state.level.flag){
+        state.level.solved=true;completeLevel(state.level.id);
+        return"\x1b[32m══════════════════════════════\n  F L A G   C A P T U R E D\n══════════════════════════════\n\n  "+state.level.flag+"\n\n  +"+TRACKS[state.level.id.split(".")[0]].levels[state.level.id].diff.split("★").length*100+" points\n\x1b[0m";
+      }return"\x1b[31minvalid flag\x1b[0m";
+    }
+    return result;
+  }
+  return"";
+}
+
+// ── Commands ─────────────────────────────────────────────────────────────
+function cmdPlay(){
+  let id=state.current;
+  if(state.completed.includes(id))return"Level "+id+" already completed. Use 'tracks' to see progress.";
+  if(!isUnlocked(id))return"Level "+id+" is locked. Complete previous levels first.";
+  state.level=new Level(id,state);state.mode="level";
+  let tr=TRACKS[id.split(".")[0]];
+  return"\x1b[1mTRACK "+id.split(".")[0]+": "+tr.name+"\x1b[0m\n"+state.level.getLore()+"\n\n\x1b[1m"+state.level.getEnigma()+"\x1b[0m\nType 'help' for commands.\n";
+}
+function cmdHelp(){
+  return"\n  play         — Campaign levels\n  walkthrough  — Guided tutorial\n  riddles      — Hacker history puzzles\n  hackername   — Generate serial alias\n  tracks       — View all tracks\n  status       — Progress & points\n  inventario   — Captured flags\n  salir        — Exit\n";
+}
+function cmdTracks(){
+  let lines=["\n  TRACKS & LEVELS\n"];
+  for(let tid in TRACKS){let tr=TRACKS[tid];lines.push("  TRACK "+tid+": "+tr.name);
+    for(let lid in tr.levels){let lv=tr.levels[lid];let s=state.completed.includes(lid)?"[DONE]":isUnlocked(lid)?"[UNLOCKED]":"[LOCKED]";
+      lines.push("    "+lid+"  "+lv.name.padEnd(28)+" "+lv.diff+"  "+s+"  +"+(lv.diff.split("★").length*100)+"pts");}lines.push("");}
+  return lines.join("\n");
+}
+function cmdStatus(){
+  let done=state.completed.length,total=8;
+  let bar="█".repeat(Math.floor(done/total*30))+"░".repeat(30-Math.floor(done/total*30));
+  return"\n  STATUS\n  points:   "+state.points+"\n  levels:   "+done+"/"+total+"\n  flags:    "+state.flags.length+"/"+total+"\n  current:  "+state.current+"\n  name:     "+(state.hackerName||"none")+"\n  ["+bar+"] "+done+"/"+total+"\n";
+}
+function cmdInventory(){
+  if(!state.flags.length)return"\n  no flags yet.\n";
+  return"\n  CAPTURED FLAGS\n"+state.flags.map(f=>"  "+f).join("\n")+"\n";
+}
+function cmdHackername(){
+  let p=["Phr34k","N011","V01d","D43m0n","Crypt0","Sh4d0w","Gh05t","B1n4ry","C1ph3r","R00t","3xpl01t","Buff3r","Ph4nt0m"];
+  let s=["4nub1s","0ur0b0r0s","V4nd4l","Hydr4","Wr41th","Sp3ct3r","F0x","W0lf","H0ll0w","Br34k3r","0r4cl3","Gl1tch"];
+  let n=Math.floor(Math.random()*9999).toString(16);
+  let name=p[Math.floor(Math.random()*p.length)]+"_"+s[Math.floor(Math.random()*s.length)]+"_"+n;
+  state.hackerName=name;save();
+  return"\n\x1b[32m══════════════════════════════\n  S 3 R 1 4 L   1 D 3 N T 1 T Y\n══════════════════════════════\n\n  \x1b[1m"+name+"\x1b[0m\n\n  4ssum3 y0ur 1d3nt1ty.\x1b[0m\n";
+}
+
+// ── Input ────────────────────────────────────────────────────────────────
+load();prompt();
+term.onKey(({key,domEvent:e})=>{
+  if(e.key==="Enter"){
+    write("\r\n");
+    if(inputBuf.trim()){let out=process(inputBuf);if(out)write(out+"\r\n");}
+    inputBuf="";prompt();
+  }else if(e.key==="Backspace"){
+    if(inputBuf.length>0){inputBuf=inputBuf.slice(0,-1);term.write("\b \b");}
+  }else if(e.ctrlKey&&e.key==="c"){
+    write("^C\r\n");inputBuf="";prompt();
+  }else if(e.ctrlKey&&e.key==="l"){
+    term.clear();prompt();
+  }else if(e.key==="Tab"){
+    e.preventDefault();
+    let cmds=["ls","cat","find","grep","cd","pwd","echo","chmod","mkdir","touch","file","stat","wc","strings","head","tail","decode","encode","caesar","bruteforce","hash","env","export","man","hint","submit","help","exit","play","tracks","status","inventario","hackername","salir"];
+    let matches=cmds.filter(c=>c.startsWith(inputBuf));
+    if(matches.length===1){inputBuf=matches[0];term.write("\r\x1b[K"+(state.mode==="menu"?"["+state.current+"] "+(state.hackerName||"void")+"@void:~$ ":"hacker@void:~$ ")+inputBuf);}
+    else if(matches.length>1)write("\r\n"+matches.join("  ")+"\r\n");
+    prompt();
+  }else if(!e.ctrlKey&&!e.altKey&&!e.metaKey&&e.key.length===1){
+    inputBuf+=e.key;term.write(key);
+  }
+});
+term.onData(d=>{if(d.length>1&&!d.startsWith("\x1b")){inputBuf+=d;term.write(d);}});
+function focusTerm(){term.focus();document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));document.querySelector(".tab").classList.add("active");}
+term.focus();
+</script>
+</body>
+</html>
